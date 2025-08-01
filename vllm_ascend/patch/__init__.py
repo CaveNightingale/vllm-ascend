@@ -16,12 +16,9 @@
 
 # ----------------------------------------------------------------------------------
 # This module manage the patch for vllm. There are two folders in this module:
-# - platform: contains the patches applied before worker starts. It's called by
-#             `vllm_ascend.utils.adapt_patch(is_global_patch=True)` in
-#             `vllm_ascend.platform.NPUPlatform.pre_register_and_update()` function.
-# - worker: contains the patches applied when worker starts. It's called by
-#           `vllm_ascend.utils.adapt_patch(is_global_patch=False)` in
-#           each worker's `__init__` function.
+# - platform: contains the patches applied before worker starts.
+# - worker: contains the patches applied when worker starts.
+# Both of them are called in `vllm_ascend::register_patch()`. 
 #
 # Then in each kind of patch, there are three folders:
 # - patch_0_10_0: contains the patches applied when vllm version is 0.10.0.

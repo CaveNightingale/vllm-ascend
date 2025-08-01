@@ -16,11 +16,10 @@
 # This file is a part of the vllm-ascend project.
 #
 
-from vllm_ascend.utils import adapt_patch  # noqa E402
+from vllm_ascend import register_patch  # noqa E402
 from vllm_ascend.utils import register_ascend_customop
 
-adapt_patch()
-adapt_patch(True)
+register_patch()
 
 # register Ascend CustomOp here because uts will use this
 register_ascend_customop()

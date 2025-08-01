@@ -39,18 +39,15 @@ from vllm.sampling_params import BeamSearchParams
 from vllm.transformers_utils.utils import maybe_model_redirect
 from vllm.utils import is_list_of
 
+from vllm_ascend import register_patch
+
 from tests.e2e.model_utils import (PROMPT_TEMPLATES, TokensTextLogprobs,
                                    TokensTextLogprobsPromptLogprobs)
-# TODO: remove this part after the patch merged into vllm, if
-# we not explicitly patch here, some of them might be effectiveless
-# in pytest scenario
-from vllm_ascend.utils import adapt_patch  # noqa E402
-
-adapt_patch(True)
-adapt_patch(False)
 
 from vllm.distributed.parallel_state import (  # noqa E402
     destroy_distributed_environment, destroy_model_parallel)
+
+register_patch()
 
 _T = TypeVar("_T", nn.Module, torch.Tensor, BatchEncoding, BatchFeature, dict)
 _M = TypeVar("_M")

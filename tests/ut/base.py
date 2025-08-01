@@ -17,15 +17,15 @@ import unittest
 
 import pytest
 
-from vllm_ascend.utils import adapt_patch, register_ascend_customop
+from vllm_ascend import register_patch
+from vllm_ascend.utils import register_ascend_customop
 
 
 class TestBase(unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
         # adapt patch by default.
-        adapt_patch(True)
-        adapt_patch()
+        register_patch()
         register_ascend_customop()
         super().setUp()
         super(TestBase, self).__init__(*args, **kwargs)
@@ -39,6 +39,5 @@ class PytestBase:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        adapt_patch(True)
-        adapt_patch()
+        register_patch()
         register_ascend_customop()

@@ -264,13 +264,6 @@ def current_stream() -> torch.npu.Stream:
     return _CURRENT_STREAM
 
 
-def adapt_patch(is_global_patch: bool = False):
-    if is_global_patch:
-        from vllm_ascend.patch import platform  # noqa: F401
-    else:
-        from vllm_ascend.patch import worker  # noqa: F401
-
-
 @functools.cache
 def vllm_version_is(target_vllm_version: str):
     if envs.VLLM_VERSION is not None:

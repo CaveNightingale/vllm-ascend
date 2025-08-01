@@ -62,9 +62,6 @@ class NPUWorker(WorkerBase):
             # Additional parameters for compatibility with vllm
             **kwargs):
         """Initialize the worker for Ascend."""
-        # register patch for vllm
-        from vllm_ascend.utils import adapt_patch
-        adapt_patch()
         # Register ops when worker init.
         from vllm_ascend import ops
         ops.register_dummy_fusion_op()

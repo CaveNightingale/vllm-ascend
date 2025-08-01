@@ -46,10 +46,8 @@ class TestNPUPlatform(TestBase):
     def test_is_sleep_mode_available(self):
         self.assertTrue(self.platform.is_sleep_mode_available())
 
-    @patch("vllm_ascend.utils.adapt_patch")
     @patch("vllm_ascend.quantization.quant_config.AscendQuantConfig")
-    def test_pre_register_and_update_with_parser(self, mock_quant_config,
-                                                 mock_adapt_patch):
+    def test_pre_register_and_update_with_parser(self, mock_quant_config):
         mock_parser = MagicMock()
         mock_action = MagicMock()
         mock_action.choices = ["awq", "gptq"]
@@ -57,42 +55,29 @@ class TestNPUPlatform(TestBase):
 
         self.platform.pre_register_and_update(mock_parser)
 
-        mock_adapt_patch.assert_called_once_with(is_global_patch=True)
-
         self.assertTrue(ASCEND_QUATIZATION_METHOD in mock_action.choices)
         self.assertEqual(len(mock_action.choices), 3)  # original 2 + ascend
 
-    @patch("vllm_ascend.utils.adapt_patch")
     @patch("vllm_ascend.quantization.quant_config.AscendQuantConfig")
-    def test_pre_register_and_update_without_parser(self, mock_quant_config,
-                                                    mock_adapt_patch):
-        self.platform.pre_register_and_update(None)
-
-        mock_adapt_patch.assert_called_once_with(is_global_patch=True)
-
-    @patch("vllm_ascend.utils.adapt_patch")
+    def test_pre_register_and_update_without_parser(self, mock_quant_config):
+        self.platform.pre_register_and_updat
     @patch("vllm_ascend.quantization.quant_config.AscendQuantConfig")
     def test_pre_register_and_update_with_parser_no_quant_action(
-            self, mock_quant_config, mock_adapt_patch):
+            self, mock_quant_config):
         mock_parser = MagicMock()
         mock_parser._option_string_actions = {}
 
         self.platform.pre_register_and_update(mock_parser)
 
-        mock_adapt_patch.assert_called_once_with(is_global_patch=True)
-
-    @patch("vllm_ascend.utils.adapt_patch")
     @patch("vllm_ascend.quantization.quant_config.AscendQuantConfig")
     def test_pre_register_and_update_with_existing_ascend_quant(
-            self, mock_quant_config, mock_adapt_patch):
+            self, mock_quant_config):
         mock_parser = MagicMock()
         mock_action = MagicMock()
         mock_action.choices = ["awq", ASCEND_QUATIZATION_METHOD]
         mock_parser._option_string_actions = {"--quantization": mock_action}
 
         self.platform.pre_register_and_update(mock_parser)
-
-        mock_adapt_patch.assert_called_once_with(is_global_patch=True)
         self.assertEqual(len(mock_action.choices), 2)
 
     def test_get_device_capability(self):

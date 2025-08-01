@@ -21,12 +21,13 @@ import torch.nn as nn
 import torch_npu
 from pytest_mock import MockerFixture
 
+from vllm_ascend import register_patch
 from vllm_ascend.ascend_forward_context import get_fused_moe_state
 from vllm_ascend.ops.fused_moe import (AscendFusedMoE,
                                        AscendUnquantizedFusedMoEMethod)
-from vllm_ascend.utils import AscendSocVersion, adapt_patch  # noqa E402
+from vllm_ascend.utils import AscendSocVersion
 
-adapt_patch(True)
+register_patch()
 
 
 def mock_ep_and_mc2_group(mocker):
