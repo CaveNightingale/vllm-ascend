@@ -70,7 +70,7 @@ class KVCacheSendingThread(threading.Thread):
         self.metadata = metadata
         self.ready_event = ready_event
 
-        self.task_tracker = set()
+        self.task_tracker = set[str]()
 
     def get_and_clear_finished_requests(self) -> set[str]:
         """
@@ -173,7 +173,7 @@ class KVCacheRecvingThread(threading.Thread):
         # TODO(jianzs): make this configurable
         self.executor = ThreadPoolExecutor(max_workers=32)
 
-        self.task_tracker = set()
+        self.task_tracker = set[str]()
 
         self.encoder = msgspec.msgpack.Encoder()
         self.decoder = msgspec.msgpack.Decoder(MooncakeAgentMetadata)
