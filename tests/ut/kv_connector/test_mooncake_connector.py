@@ -745,7 +745,7 @@ class TestMooncakeConnectorMetadata(unittest.TestCase):
 
     def test_add_new_req(self):
         meta = MooncakeConnectorMetadata()
-        meta.add_new_req(request_id="req1",
+        meta.add_new_decoding_req(request_id="req1",
                          local_block_ids=[1, 2, 3],
                          kv_transfer_params={
                              "remote_block_ids": [4, 5, 6],
@@ -754,8 +754,8 @@ class TestMooncakeConnectorMetadata(unittest.TestCase):
                              "remote_port": 5000
                          })
 
-        self.assertEqual(len(meta.requests), 1)
-        req_meta = meta.requests["req1"]
+        self.assertEqual(len(meta.decoding_requests), 1)
+        req_meta = meta.decoding_requests["req1"]
         self.assertIsInstance(req_meta, ReqMeta)
         self.assertEqual(req_meta.local_block_ids, [1, 2, 3])
         self.assertEqual(req_meta.remote_block_ids, [4, 5, 6])

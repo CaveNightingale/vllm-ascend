@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 
 GET_META_MSG = b"get_meta_msg"
 DONE_RECVING_MSG = b"done_recving_msg"
+DECODER_HELLO = b"decoder_hello"
+PREFILLER_BYE = b"prefiller_bye"
 
 
 class MooncakeAgentMetadata(msgspec.Struct, omit_defaults=True, dict=True):
@@ -138,6 +140,18 @@ class KVCacheTaskTracker:
         return finished_requests
 
 
+class DecoderMeta:
+    request_id: str
+    engine_id: str
+    host: str
+    port: str
+    blocks: list[int]
+
+class PrefillerMeta:
+    blocks: list[int]
+    sent_layer_count: int
+    ready_layer_count: int
+
 class KVCacheSendingThread(threading.Thread):
 
     def __init__(self, tp_rank: int, decode_tp_size: int, local_engine_id: str,
@@ -156,6 +170,35 @@ class KVCacheSendingThread(threading.Thread):
         self.task_tracker = KVCacheTaskTracker(self.tp_rank,
                                                self.local_engine_id,
                                                self.decode_tp_size)
+        self.decoder_meta = dict[str, DecoderMeta]()
+        self.prefiller_meta = dict[str, PrefillerMeta]()
+        # TODO(layer-wise): count layers
+        self.layer_count = 72
+    
+    def _async_transfer(self, remote_host: str, remote_port: str, local_block_ids: list[int], 
+                           remote_block_ids: list[int], layer: int):
+        # TODO(layer-wise): transfer
+        pass
+
+    def _maybe_transfer(self, request_id: str):
+        prefiller_meta = self.prefiller_meta.get(request_id)
+        decoder_meta = self.decoder_meta.get(request_id)
+        if prefiller_meta is None or decoder_meta is None:
+            return
+        for i in range(prefiller_meta.sent_layer_count, prefiller_meta.ready_layer_count):
+            self._async_transfer(
+                remote_host=decoder_meta.host,
+                remote_port=decoder_meta.port,
+                local_block_ids=prefiller_meta.blocks[i],
+                remote_block_ids=decoder_meta.blocks[i],
+                layer=i
+            )
+        prefiller_meta.sent_layer_count = prefiller_meta.ready_layer_count
+        if prefiller_meta.sent_layer_count == self.layer_count:
+            self.task_tracker.mark_request_finished(request_id)
+            self.prefiller_meta.pop(request_id)
+            self.decoder_meta.pop(request_id)
+            # TODO(layer-wise): notify decoder
 
     def get_and_clear_finished_requests(self) -> set[str]:
         """
@@ -220,6 +263,12 @@ class KVCacheSendingThread(threading.Thread):
                                     "Socket not ready, retrying to send ACK for "
                                     "request %s", msg[1])
                                 time.sleep(0.01)
+                    elif msg[0] == DECODER_HELLO:
+                        logger.debug("Got DECODER_HELLO for request %s",
+                                     msg[1])
+                        decoder_meta = msg[2] # TODO(layer-wise): implement
+                        self.decoder_meta[decoder_meta.request_id] = decoder_meta
+                        self._maybe_transfer()
                     else:
                         logger.error(
                             "Connection listener got unexpected message %s",
@@ -227,7 +276,37 @@ class KVCacheSendingThread(threading.Thread):
                 except Exception as e:
                     logger.error("Connection listener got exception %s: %s",
                                  type(e), e)
+    
+    def mark_layer_ready(self, request_id: str, layer_count: int):
+        prefiller_meta = self.prefiller_meta.get(request_id)
+        if not prefiller_meta:
+            self.prefiller_meta[request_id] = PrefillerMeta(
+                request_id=request_id,
+                sent_layer_count=0,
+                ready_layer_count=layer_count
+            )
+        else:
+            prefiller_meta.ready_layer_count = layer_count
+        self._maybe_transfer(request_id)
 
+class KVCacheRecvingPrefillerByeThread(threading.Thread):
+
+    def __init__(self, port: int, finished: KVCacheTaskTracker):
+        super().__init__(daemon=True, name="KVCacheRecvingPrefillerByeThread")
+        self.port = port
+        self.finished = finished
+
+    def run(self):
+        """Run the thread to handle KV cache receiving for prefiller bye messages."""
+        with zmq_ctx(zmq.ROUTER, make_zmq_path("tcp", "*", self.port)) as sock:  # type: ignore
+            while True:
+                msg = sock.recv_multipart()
+                if msg[0] == PREFILLER_BYE:
+                    logger.debug("Received PREFILLER_BYE message")
+                    sock.send_multipart((msg[1], b"ACK"))
+                    self.finished._increment_task_count(msg[1])
+                else:
+                    logger.warning("Received unexpected message: %s", msg)
 
 class KVCacheRecvingThread(threading.Thread):
 
@@ -270,6 +349,10 @@ class KVCacheRecvingThread(threading.Thread):
                 deque)
         self.remote_poller = zmq.Poller()  # type: ignore
         self.timeout = 1.0  # seconds
+        self.prefiller_bye_thread = KVCacheRecvingPrefillerByeThread( # TODO(layer-wise): fix port
+            port=8000,
+            finished=self.task_tracker
+        )
 
     def add_request(self, request_id: str, local_block_ids: list[int],
                     remote_block_ids: list[int], remote_engine_id: str,
@@ -308,6 +391,8 @@ class KVCacheRecvingThread(threading.Thread):
                 logger.error(f"Error in KVCacheTransferThread: {e}")
 
     def _handle_request(self, req_meta: dict[str, Any]):
+        # TODO(layer-wise): send DECODER_HELLO to prefiller to ask prefiller to send
+
         request_id = req_meta["request_id"]
         remote_host = req_meta["remote_host"]
         remote_handshake_port = req_meta["remote_handshake_port"]
@@ -477,20 +562,32 @@ class KVCacheRecvingThread(threading.Thread):
 class MooncakeConnectorMetadata(KVConnectorMetadata):
 
     def __init__(self):
-        self.requests: dict[str, ReqMeta] = {}
+        self.decoding_requests: dict[str, ReqMeta] = {}
+        self.prefilling_requests: dict[str, ReqMeta] = {}
 
-    def add_new_req(
+    def add_new_decoding_req(
         self,
         request_id: str,
         local_block_ids: list[int],
         kv_transfer_params: dict[str, Any],
     ):
-        self.requests[request_id] = ReqMeta(
+        self.decoding_requests[request_id] = ReqMeta(
             local_block_ids=local_block_ids,
             remote_block_ids=kv_transfer_params["remote_block_ids"],
             remote_engine_id=kv_transfer_params["remote_engine_id"],
             remote_host=kv_transfer_params["remote_host"],
             remote_port=kv_transfer_params["remote_port"],
+        )
+
+    def add_new_prefilling_req(self, request_id: str, remote_block_ids: list[int], 
+                               remote_engine_id: str, remote_host: str, remote_port: int):
+        # TODO(layer-wise): add local block ids
+        self.prefilling_requests[request_id] = ReqMeta(
+            local_block_ids=[],
+            remote_block_ids=remote_block_ids,
+            remote_engine_id=remote_engine_id,
+            remote_host=remote_host,
+            remote_port=remote_port
         )
 
 
@@ -508,6 +605,7 @@ class MooncakeConnector(KVConnectorBase_V1):
             self.connector_scheduler = None
             self.connector_worker = MooncakeConnectorWorker(
                 vllm_config, str(self.engine_id))
+        self.current_layer: int = 0
 
     ############################################################
     # Scheduler Side Methods
@@ -560,6 +658,7 @@ class MooncakeConnector(KVConnectorBase_V1):
         assert self.connector_worker is not None
         assert isinstance(self._connector_metadata, MooncakeConnectorMetadata)
         self.connector_worker.start_load_kv(self._connector_metadata)
+        self.current_layer = 0
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         """MooncakeConnector does not do layerwise saving."""
@@ -568,7 +667,9 @@ class MooncakeConnector(KVConnectorBase_V1):
     def save_kv_layer(self, layer_name: str, kv_layer: torch.Tensor,
                       attn_metadata: "AttentionMetadata", **kwargs) -> None:
         """MooncakeConnector does not save explicitly."""
-        pass
+        requests = self._get_connector_metadata().prefill_requests
+        self.connector_worker.send_layer(layer_name, requests, kv_layer, self.current_layer)
+        self.current_layer += 1
 
     def wait_for_save(self):
         """MooncakeConnector does not save explicitly."""
@@ -675,7 +776,7 @@ class MooncakeConnectorScheduler:
             # For the case where there are no remote blocks to pull
             # (block_ids is empty), we don't need to schedule
             # an async read on the worker side.
-            meta.add_new_req(
+            meta.add_new_decoding_req(
                 request_id=req_id,
                 local_block_ids=block_ids,
                 kv_transfer_params=req.kv_transfer_params,
@@ -683,6 +784,9 @@ class MooncakeConnectorScheduler:
 
         # Clear the list once workers start the transfers
         self._reqs_need_recv.clear()
+
+        # TODO(layer-wise): add prefilling requests to metadata
+        # TODO(layer-wise): send to metadata server
 
         return meta
 
@@ -746,6 +850,7 @@ class MooncakeConnectorWorker:
         self.side_channel_host = get_ip()
         self.max_device_id = self.tp_size * self.dp_size
         self.kv_role = vllm_config.kv_transfer_config.kv_role
+        self.layerwise = True # TODO(layer-wise): get it from config
 
         # Handshake base port
         self.side_channel_port = (
@@ -919,7 +1024,7 @@ class MooncakeConnectorWorker:
 
     def start_load_kv(self, metadata: MooncakeConnectorMetadata):
         """Start loading KV blocks from remote engine."""
-        for req_id, meta in metadata.requests.items():
+        for req_id, meta in metadata.decoding_requests.items():
             logger.debug(
                 "start_load_kv for request %s from remote engine %s. "
                 "Num local_block_ids: %s. Num remote_block_ids: %s. ", req_id,
@@ -950,6 +1055,15 @@ class MooncakeConnectorWorker:
                                    self._decode_tp_size)
         return sampled_nums
 
+    def send_layer(self, layer_name: str, request_ids: list[str], layers: torch.Tensor, layer_index: int):
+        if self.kv_role != "kv_producer":
+            return
+    
+        if not self.layerwise:
+            return
+
+        for request_id in request_ids:
+            self.kv_send_thread.mark_layer_ready(request_id, layer_index)
 
 @contextlib.contextmanager
 def zmq_ctx(socket_type: Any,
